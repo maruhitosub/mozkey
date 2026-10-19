@@ -278,6 +278,50 @@ TEST(ZenzNamedPipeClientTest, PartialResponsePayloadTimesOut) {
   EXPECT_EQ(response.debug, "pipe_read_payload_timeout");
 }
 
+TEST(ZenzNamedPipeClientTest, CloudPipeWaitsForRequestTimeout) {
+  // A pipe named "...\mozkey_cloud_scorer" gets at least the request timeout
+  // plus one second, even when the failsafe is shorter.
+  TestPipeName name = MakeTestPipeName();
+  name.utf8 += "\\mozkey_cloud_scorer";
+  name.wide += L"\\mozkey_cloud_scorer";
+  HANDLE server = CreateServerPipe(name.wide);
+  ASSERT_NE(server, INVALID_HANDLE_VALUE);
+
+  std::atomic<bool> client_done{false};
+  std::thread server_thread([&] {
+    ZenzWireRequestHeader request = {};
+    std::string prompt;
+    if (ConnectServer(server) && ReadRequest(server, &request, &prompt)) {
+      ::Sleep(500);  // Longer than the 200 ms failsafe below.
+      const std::string value = "cloud";
+      ZenzWireResponseHeader response = {};
+      response.magic = kZenzWireMagic;
+      response.version = kZenzWireVersion;
+      response.kind = kZenzWireKindResponse;
+      response.generation = request.generation;
+      response.status = kZenzWireStatusOk;
+      response.value_size = static_cast<uint32_t>(value.size());
+      if (WriteExact(server, &response, sizeof(response)) &&
+          WriteExact(server, value.data(), response.value_size)) {
+        for (int i = 0; !client_done.load() && i < 2000; ++i) {
+          ::Sleep(1);
+        }
+      }
+    }
+    ::CloseHandle(server);
+  });
+
+  ZenzNamedPipeClient client(200);
+  ZenzLiveRequest request = MakeRequest(name, 75);
+  request.timeout_msec = 1000;
+  const ZenzLiveResponse response = client.Convert(request);
+  client_done = true;
+  server_thread.join();
+
+  EXPECT_TRUE(response.ok) << response.debug;
+  EXPECT_EQ(response.value, "cloud");
+}
+
 TEST(ZenzNamedPipeClientTest, OversizedResponsePayloadIsRejected) {
   const TestPipeName name = MakeTestPipeName();
   HANDLE server = CreateServerPipe(name.wide);

@@ -562,11 +562,15 @@ ZenzLiveResponse ZenzNamedPipeClient::Convert(
 
   const absl::Time start = absl::Now();
   // Cloud correction requests may legitimately take longer than the local
-  // scorer's safety budget; never cut a request off before its own timeout.
+  // scorer's safety budget; never cut one off before its own timeout.  Local
+  // Zenz requests keep the configured failsafe unchanged.
+  const uint32_t transport_budget_msec =
+      IsCloudScorerPipe(Utf8ToWidePipeName(request.pipe_name))
+          ? std::max<uint32_t>(transport_safety_timeout_msec_,
+                               request.timeout_msec + 1000)
+          : transport_safety_timeout_msec_;
   const Deadline transport_deadline =
-      Clock::now() +
-      std::chrono::milliseconds(std::max<uint32_t>(
-          transport_safety_timeout_msec_, request.timeout_msec + 1000));
+      Clock::now() + std::chrono::milliseconds(transport_budget_msec);
 
   if (request.prompt.size() > kMaxPromptBytes) {
     response.ok = false;
