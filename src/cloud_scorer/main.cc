@@ -11,7 +11,7 @@
 //     endpoint=https://opencode.ai/inference/go/openai/v1/chat/completions
 //     model=deepseek-v4.1-flash
 //     max_tokens=128
-//     extra_body=
+//     extra_body="thinking":{"type":"disabled"}   (default for deepseek-*)
 //     local_fallback=1
 //   API key: Windows Credential Manager generic credential
 //     "Mozkey/CloudScorer" (password field), or the MOZKEY_CLOUD_API_KEY /
@@ -32,6 +32,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cwctype>
 #include <future>
 #include <limits>
 #include <mutex>
@@ -77,6 +78,11 @@ constexpr wchar_t kDefaultEndpoint[] =
     L"https://opencode.ai/inference/go/openai/v1/chat/completions";
 constexpr wchar_t kDefaultModel[] = L"deepseek-v4.1-flash";
 constexpr int kDefaultMaxTokens = 128;
+// Marks extra_body as absent from the ini (an empty value is a valid choice).
+constexpr wchar_t kExtraBodyUnset[] = L"\x01";
+// DeepSeek V4 thinks by default, which takes 2-3 s per request; disabled it
+// answers in about 1.2 s warm.  Applied only when extra_body is unset.
+constexpr char kDeepSeekDefaultExtraBody[] = "\"thinking\":{\"type\":\"disabled\"}";
 constexpr int kMaxMaxTokens = 1024;
 
 constexpr uint32_t kMaxPromptBytes = 8192;
@@ -153,15 +159,43 @@ std::wstring GetExeDirectory() {
   return pos == std::wstring::npos ? std::wstring() : full.substr(0, pos);
 }
 
-std::wstring GetSettingsPath() {
-  PWSTR local_app_data = nullptr;
-  if (FAILED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr,
-                                    &local_app_data))) {
-    return std::wstring();
+std::wstring KnownFolderPath(REFKNOWNFOLDERID id) {
+  PWSTR folder = nullptr;
+  std::wstring path;
+  if (SUCCEEDED(::SHGetKnownFolderPath(id, 0, nullptr, &folder))) {
+    path = folder;
   }
-  std::wstring path(local_app_data);
-  ::CoTaskMemFree(local_app_data);
-  return path + L"\\Mozkey\\cloud_scorer.ini";
+  ::CoTaskMemFree(folder);
+  return path;
+}
+
+struct SettingsLocation {
+  std::wstring path;
+  // Short ASCII tag reported in the response debug string ("cfg=...").
+  const char* source = "none";
+};
+
+// mozc_server starts this process inside its sandbox (low integrity,
+// restricted token, locked-down job), where SHGetKnownFolderPath was observed
+// not to yield a readable settings file.  Prefer the inherited LOCALAPPDATA,
+// then the known folders, and use the first file that exists.
+SettingsLocation GetSettingsLocation() {
+  constexpr wchar_t kRelative[] = L"\\Mozkey\\cloud_scorer.ini";
+  const std::pair<std::wstring, const char*> candidates[] = {
+      {GetEnvWide(L"LOCALAPPDATA"), "env"},
+      {KnownFolderPath(FOLDERID_LocalAppData), "known"},
+      {KnownFolderPath(FOLDERID_LocalAppDataLow), "low"},
+  };
+  for (const auto& [dir, source] : candidates) {
+    if (dir.empty()) continue;
+    const std::wstring path = dir + kRelative;
+    const DWORD attr = ::GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES &&
+        (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+      return {path, source};
+    }
+  }
+  return {};
 }
 
 std::wstring ReadIniString(const std::wstring& path, const wchar_t* key,
@@ -208,12 +242,15 @@ struct Options {
   std::string extra_body_members;
   bool local_fallback = true;
   std::string api_key;
+  const char* settings_source = "none";
 };
 
 // Settings are re-read for each request so edits apply without restarting.
 Options LoadOptions() {
-  const std::wstring ini = GetSettingsPath();
+  const SettingsLocation location = GetSettingsLocation();
+  const std::wstring& ini = location.path;
   Options options;
+  options.settings_source = location.source;
   options.endpoint = ReadIniString(ini, L"endpoint", kDefaultEndpoint);
   options.model = WideToUtf8(ReadIniString(ini, L"model", kDefaultModel));
   const std::wstring max_tokens = ReadIniString(ini, L"max_tokens", L"");
@@ -222,14 +259,22 @@ Options LoadOptions() {
     if (parsed > 0) options.max_tokens = std::min(parsed, kMaxMaxTokens);
   }
   options.extra_body_members =
-      WideToUtf8(ReadIniString(ini, L"extra_body", L""));
+      WideToUtf8(ReadIniString(ini, L"extra_body", kExtraBodyUnset));
   options.local_fallback = ReadIniString(ini, L"local_fallback", L"1") != L"0";
   const std::wstring env_endpoint = GetEnvWide(L"MOZKEY_CLOUD_ENDPOINT");
   if (!env_endpoint.empty()) options.endpoint = env_endpoint;
   const std::wstring env_model = GetEnvWide(L"MOZKEY_CLOUD_MODEL");
   if (!env_model.empty()) options.model = WideToUtf8(env_model);
+  const std::wstring env_extra = GetEnvWide(L"MOZKEY_CLOUD_EXTRA_BODY");
+  if (!env_extra.empty()) options.extra_body_members = WideToUtf8(env_extra);
   const std::wstring env_fallback = GetEnvWide(L"MOZKEY_CLOUD_LOCAL_FALLBACK");
   if (!env_fallback.empty()) options.local_fallback = env_fallback != L"0";
+  if (options.extra_body_members == "\x01") {
+    options.extra_body_members.clear();
+    if (options.model.rfind("deepseek", 0) == 0) {
+      options.extra_body_members = kDeepSeekDefaultExtraBody;
+    }
+  }
   options.api_key = LoadApiKey();
   return options;
 }
@@ -455,6 +500,7 @@ BackendResult QueryLocalScorer(ZenzWireRequestHeader header,
 
 class CloudClient {
  public:
+  CloudClient() : session_id_(NewSessionId()) {}
   ~CloudClient() { Reset(); }
 
   BackendResult Complete(const Options& options,
@@ -508,9 +554,15 @@ class CloudClient {
     const int timeout = static_cast<int>(timeout_msec);
     ::WinHttpSetTimeouts(request, timeout, timeout, timeout, timeout);
 
+    // OpenCode Go rejects requests without a stable per-conversation
+    // x-opencode-session ID (HTTP 400).  One IME process is treated as one
+    // conversation; other OpenAI-compatible services ignore the header.
     std::wstring headers =
         L"Content-Type: application/json; charset=utf-8\r\n"
         L"Accept: application/json\r\n"
+        L"x-opencode-session: " +
+        session_id_ +
+        L"\r\n"
         L"Authorization: Bearer " +
         Utf8ToWide(options.api_key) + L"\r\n";
 
@@ -649,6 +701,22 @@ class CloudClient {
     }
   }
 
+  static std::wstring NewSessionId() {
+    GUID guid = {};
+    wchar_t text[64] = {};
+    if (FAILED(::CoCreateGuid(&guid)) ||
+        ::StringFromGUID2(guid, text, 64) == 0) {
+      return L"mozkey-" + std::to_wstring(::GetCurrentProcessId()) + L"-" +
+             std::to_wstring(::GetTickCount64());
+    }
+    std::wstring id = L"mozkey-";
+    for (const wchar_t* p = text; *p != L'\0'; ++p) {
+      if (*p != L'{' && *p != L'}') id.push_back(::towlower(*p));
+    }
+    return id;
+  }
+
+  const std::wstring session_id_;
   std::mutex mutex_;
   HINTERNET session_ = nullptr;
   HINTERNET connect_ = nullptr;
@@ -783,6 +851,8 @@ void HandleClient(HANDLE pipe, CloudClient* cloud) {
     fallback.debug = result.debug + ";" + fallback.debug;
     result = std::move(fallback);
   }
+  // Which settings file was used ("none" = built-in defaults).
+  result.debug += std::string(";cfg=") + options.settings_source;
 
   SendResponse(pipe, header.generation, result, ::GetTickCount() - start,
                io_deadline);

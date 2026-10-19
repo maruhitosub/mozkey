@@ -230,7 +230,7 @@ constexpr uint32_t kMaxZenzDeferredPresentationTimeoutMsec = 3000;
 constexpr uint32_t kMaxZenzLiveCorrectionRightContextLength = 128;
 constexpr uint32_t kMaxZenzLiveCorrectionDelayMsec = 5000;
 constexpr uint32_t kMaxZenzLiveCorrectionTimeoutMsec = 1000;
-constexpr uint32_t kDefaultZenzCloudCorrectionTimeoutMsec = 1500;
+constexpr uint32_t kDefaultZenzCloudCorrectionTimeoutMsec = 2500;
 // Keep cloud requests inside kZenzLiveCorrectionAsyncWaitMsec so a late cloud
 // result can still be adopted by the async poll.
 constexpr uint32_t kMaxZenzCloudCorrectionTimeoutMsec = 3000;

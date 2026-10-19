@@ -68,22 +68,30 @@ Zenz ライブ補正をクラウドの LLM で行う機能です。OpenAI 互換
    ; OpenCode Go の Chat Completions 対応モデル ID
    model=deepseek-v4.1-flash
    max_tokens=128
-   ; リクエスト本文に追加する JSON メンバー (カンマ区切り。既定は空)
-   ; 例: extra_body="temperature":0.2 (モデルによっては 0 を受け付けません)
-   extra_body=
+   ; リクエスト本文に追加する JSON メンバー (カンマ区切り)
+   ; 省略時、モデルが deepseek-* なら思考を止める "thinking":{"type":"disabled"}、
+   ; それ以外は何も付けません。空 (extra_body=) にすると何も付けません。
+   extra_body="thinking":{"type":"disabled"}
    ; 0 にするとクラウド失敗時にローカル Zenz へフォールバックしない
    local_fallback=1
    ```
 
    環境変数 `MOZKEY_CLOUD_ENDPOINT` / `MOZKEY_CLOUD_MODEL` /
-   `MOZKEY_CLOUD_LOCAL_FALLBACK` は ini より優先されます。
+   `MOZKEY_CLOUD_EXTRA_BODY` / `MOZKEY_CLOUD_LOCAL_FALLBACK` は ini より優先されます。
+
+   OpenCode Go は会話ごとの `x-opencode-session` ヘッダーを必須としているため、
+   scorer は起動ごとにランダムなセッション ID を付けて送ります。
+   なお OpenCode Go は「OpenCode などのコーディングエージェント向け」とされており、
+   IME からの利用は想定用途の外です。
 
 ## タイムアウト
 
-`zenz_cloud_correction_timeout_msec` (既定 1500 ms、最大 3000 ms) を超えた
+`zenz_cloud_correction_timeout_msec` (既定 2500 ms、最大 3000 ms) を超えた
 クラウド要求は打ち切られ、ローカル Zenz の結果が使われます。
-推論 (思考) を行うモデルは遅くなりがちなので、`*-flash` 系の高速なモデルを
-推奨します。モデルが対応していれば `extra_body` で推論を無効化してください。
+実測 (OpenCode Go、deepseek-v4.1-flash、思考なし) では接続確立込みの初回が
+約 2.2 秒、2 回目以降が約 1.2 秒でした。思考を行うモデルは 2〜3 秒以上かかります
+(glm-5.3-flash は思考を止められず、`max_tokens` を使い切って空の応答になることが
+あります)。
 
 ## デバッグ
 
