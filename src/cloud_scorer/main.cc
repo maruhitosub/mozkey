@@ -6,7 +6,8 @@
 // result instead.
 //
 // Settings (all optional except the API key):
-//   %LOCALAPPDATA%\Mozkey\cloud_scorer.ini
+//   %USERPROFILE%\AppData\LocalLow\Mozc\cloud_scorer.ini (readable from
+//   mozc_server's sandbox; %LOCALAPPDATA%\Mozkey\ is a fallback outside it)
 //     [cloud]
 //     endpoint=https://opencode.ai/inference/go/openai/v1/chat/completions
 //     model=deepseek-v4.1-flash
@@ -32,6 +33,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cwchar>
 #include <cwctype>
 #include <future>
 #include <limits>
@@ -178,32 +180,51 @@ struct SettingsLocation {
 };
 
 // mozc_server starts this process inside its sandbox (low integrity,
-// restricted token, locked-down job), where the settings file under
-// %LOCALAPPDATA% was observed to be unreadable.  Try the inherited
-// LOCALAPPDATA, the known folder, then LocalLow (writable from low integrity),
-// and use the first file that exists.
+// restricted token, locked-down job).  Use the first settings file that
+// exists among the candidates below.
 SettingsLocation GetSettingsLocation() {
   constexpr wchar_t kRelative[] = L"\\Mozkey\\cloud_scorer.ini";
+  const std::wstring user_profile = GetEnvWide(L"USERPROFILE");
   const std::pair<std::wstring, const char*> candidates[] = {
-      {GetEnvWide(L"LOCALAPPDATA"), "env"},
-      {KnownFolderPath(FOLDERID_LocalAppData), "known"},
-      {KnownFolderPath(FOLDERID_LocalAppDataLow), "low"},
+      // mozc_server's own profile directory.  Inside mozc_server's sandbox
+      // this is the only location observed to be readable (the others fail
+      // with ERROR_PATH_NOT_FOUND there), so it is the documented location.
+      {user_profile.empty()
+           ? std::wstring()
+           : user_profile + L"\\AppData\\LocalLow\\Mozc\\cloud_scorer.ini",
+       "mozc"},
+      // Fallbacks for a scorer started outside the sandbox (development).
+      {GetEnvWide(L"LOCALAPPDATA") + kRelative, "env"},
+      {KnownFolderPath(FOLDERID_LocalAppData) + kRelative, "known"},
   };
   std::string errors;
-  for (const auto& [dir, source] : candidates) {
+  for (const auto& [path, source] : candidates) {
     if (!errors.empty()) errors += ",";
     errors += source;
-    if (dir.empty()) {
+    if (path.size() <= std::wcslen(kRelative)) {
       errors += ":nodir";
       continue;
     }
-    const std::wstring path = dir + kRelative;
     const DWORD attr = ::GetFileAttributesW(path.c_str());
     if (attr != INVALID_FILE_ATTRIBUTES &&
         (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
       return {path, source};
     }
     errors += ":" + std::to_string(::GetLastError());
+    // Report how many trailing path components are unreachable, to locate
+    // where the sandbox stops the lookup.
+    std::wstring parent = path;
+    int missing = 0;
+    while (true) {
+      const size_t pos = parent.find_last_of(L'\\');
+      if (pos == std::wstring::npos || pos < 3) break;
+      parent.resize(pos);
+      ++missing;
+      if (::GetFileAttributesW(parent.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        break;
+      }
+    }
+    errors += "/up" + std::to_string(missing);
   }
   return {std::wstring(), "none(" + errors + ")"};
 }

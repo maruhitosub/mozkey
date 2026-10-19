@@ -58,7 +58,9 @@ Zenz ライブ補正をクラウドの LLM で行う機能です。OpenAI 互換
 
    環境変数でも指定できます。優先順位は `MOZKEY_CLOUD_API_KEY` →
    資格情報マネージャー → `OPENCODE_API_KEY` です。
-3. 必要なら `%LOCALAPPDATA%\Mozkey\cloud_scorer.ini` で接続先とモデルを変えます。
+3. 必要なら `%USERPROFILE%\AppData\LocalLow\Mozc\cloud_scorer.ini` で接続先と
+   モデルを変えます。IME のサンドボックスから読めるのは Mozc のこのフォルダだけです
+   (`%LOCALAPPDATA%\Mozkey\` は開発用に単体起動したときだけ読まれます)。
    ファイルは要求ごとに読み直されるので、変更は即時反映されます。
 
    ```ini
