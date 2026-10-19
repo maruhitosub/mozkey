@@ -1,0 +1,48 @@
+load(
+    "//:build_defs.bzl",
+    "mozc_cc_binary",
+    "mozc_cc_library",
+    "mozc_cc_test",
+    "mozc_win32_resource_from_template",
+)
+
+package(default_visibility = ["//visibility:private"])
+
+mozc_cc_library(
+    name = "cloud_prompt",
+    srcs = ["cloud_prompt.cc"],
+    hdrs = ["cloud_prompt.h"],
+)
+
+mozc_cc_test(
+    name = "cloud_prompt_test",
+    size = "small",
+    srcs = ["cloud_prompt_test.cc"],
+    deps = [
+        ":cloud_prompt",
+        "//testing:gunit_main",
+    ],
+)
+
+mozc_cc_binary(
+    name = "mozkey_cloud_scorer",
+    srcs = ["main.cc"],
+    linkopts = [
+        "Advapi32.lib",
+        "Ole32.lib",
+        "Shell32.lib",
+        "Winhttp.lib",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cloud_prompt",
+        ":mozkey_cloud_scorer_resources",
+        "//zenz:wire_protocol",
+    ],
+)
+
+mozc_win32_resource_from_template(
+    name = "mozkey_cloud_scorer_resources",
+    src = "mozkey_cloud_scorer.rc",
+)

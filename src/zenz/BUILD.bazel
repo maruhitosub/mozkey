@@ -6,6 +6,7 @@ mozc_cc_library(
     name = "wire_protocol",
     hdrs = ["zenz_wire_protocol.h"],
     visibility = [
+        "//cloud_scorer:__pkg__",
         "//session:__pkg__",
         "//zenz_scorer:__pkg__",
     ],

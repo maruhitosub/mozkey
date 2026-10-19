@@ -149,6 +149,7 @@ def run_wix4(args) -> None:
   custom_action = pathlib.Path(args.custom_action).resolve()
 
   zenz_scorer = pathlib.Path(args.zenz_scorer).resolve()
+  cloud_scorer = pathlib.Path(args.cloud_scorer).resolve()
   zenz_llama_server = pathlib.Path(args.zenz_llama_server).resolve()
   zenz_model = pathlib.Path(args.zenz_model).resolve()
 
@@ -199,6 +200,7 @@ def run_wix4(args) -> None:
       '-define', f'MozcToolPath={mozc_tool}',
       '-define', f'CustomActions64Path={custom_action}',
       '-define', f'ZenzScorerPath={zenz_scorer}',
+      '-define', f'CloudScorerPath={cloud_scorer}',
       '-define', f'ZenzLlamaServerPath={zenz_llama_server}',
       '-define', f'ZenzModelPath={zenz_model}',
       '-define', f'DocumentsDir={document_dir}',
@@ -234,6 +236,7 @@ def main():
   parser.add_argument('--mozc_tip64x', type=str)
   parser.add_argument('--custom_action', type=str)
   parser.add_argument('--zenz_scorer', type=str)
+  parser.add_argument('--cloud_scorer', type=str)
   parser.add_argument('--zenz_llama_server', type=str)
   parser.add_argument('--zenz_model', type=str)
   parser.add_argument('--icon_path', type=str)

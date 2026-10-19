@@ -384,6 +384,22 @@ message Config {
   // Debug logging for zenz live correction.
   optional bool zenz_live_correction_debug = 1010 [default = false];
 
+  // Windows only. Send zenz live correction requests to
+  // mozkey_cloud_scorer.exe, which asks an OpenAI-compatible cloud API (for
+  // example OpenCode Go) and falls back to the local Zenz scorer. Requires
+  // use_zenz_live_correction. The left context is sent to the cloud service.
+  // Field numbers 1900+ are reserved for this fork to avoid upstream clashes.
+  optional bool use_zenz_cloud_correction = 1900 [default = false];
+
+  // Windows named pipe endpoint for mozkey_cloud_scorer.exe.
+  optional string zenz_cloud_correction_pipe_name = 1901
+      [default = "\\\\.\\pipe\\mozkey_cloud_scorer"];
+
+  // Timeout in milliseconds for one cloud correction request. Cloud round
+  // trips are slower than local Zenz, so this is separate from
+  // zenz_live_correction_timeout_msec.
+  optional uint32 zenz_cloud_correction_timeout_msec = 1902 [default = 1500];
+
   // Legacy combined Zenz feedback switch (recording, automatic reuse, and
   // Zenz-to-Mozc history learning). Keep field 1011 for configuration backward
   // compatibility. The three independent fields below inherit this value

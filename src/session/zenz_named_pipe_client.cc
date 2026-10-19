@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <limits>
 #include <cstring>
+#include <cwctype>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -300,12 +302,27 @@ std::wstring JoinPath(const std::wstring& dir, const std::wstring& file) {
   return dir + L"\\" + file;
 }
 
-bool LaunchZenzScorerIfNeeded() {
+// mozkey_cloud_scorer.exe serves the cloud correction pipe; every other pipe
+// name is served by the local mozc_zenz_scorer.exe.
+bool IsCloudScorerPipe(const std::wstring& pipe_name) {
+  constexpr std::wstring_view kCloudPipeSuffix = L"\\mozkey_cloud_scorer";
+  return pipe_name.size() >= kCloudPipeSuffix.size() &&
+         std::equal(kCloudPipeSuffix.rbegin(), kCloudPipeSuffix.rend(),
+                    pipe_name.rbegin(), [](wchar_t a, wchar_t b) {
+                      return ::towlower(a) == ::towlower(b);
+                    });
+}
+
+bool LaunchZenzScorerIfNeeded(const std::wstring& pipe_name) {
   // Do not make scorer launch a one-shot decision.  The scorer process may be
   // killed independently from mozc_server.exe during development, upgrade, or
   // crash recovery.  Throttle only very recent launch attempts to avoid spawning
   // many scorer processes while the pipe is still being created.
-  static std::atomic<DWORD> last_launch_tick{0};
+  static std::atomic<DWORD> local_last_launch_tick{0};
+  static std::atomic<DWORD> cloud_last_launch_tick{0};
+  const bool cloud = IsCloudScorerPipe(pipe_name);
+  std::atomic<DWORD>& last_launch_tick =
+      cloud ? cloud_last_launch_tick : local_last_launch_tick;
 
   constexpr DWORD kLaunchThrottleMsec = 2000;
 
@@ -329,7 +346,8 @@ bool LaunchZenzScorerIfNeeded() {
   }
 
   const std::wstring dir = GetCurrentModuleDirectory();
-  const std::wstring scorer_path = JoinPath(dir, L"mozc_zenz_scorer.exe");
+  const std::wstring scorer_path = JoinPath(
+      dir, cloud ? L"mozkey_cloud_scorer.exe" : L"mozc_zenz_scorer.exe");
 
   const DWORD attr = ::GetFileAttributesW(scorer_path.c_str());
   if (attr == INVALID_FILE_ATTRIBUTES ||
@@ -402,7 +420,7 @@ HANDLE OpenPipeWithAutoLaunch(const std::wstring& pipe_name,
           .append(std::to_wstring(error)));
 
   if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
-    const bool launched = LaunchZenzScorerIfNeeded();
+    const bool launched = LaunchZenzScorerIfNeeded(pipe_name);
     ZenzPipeDebugOutput(
         std::wstring(L"scorer launch requested launched=")
             .append(launched ? L"true" : L"false"));

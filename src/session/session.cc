@@ -230,6 +230,10 @@ constexpr uint32_t kMaxZenzDeferredPresentationTimeoutMsec = 3000;
 constexpr uint32_t kMaxZenzLiveCorrectionRightContextLength = 128;
 constexpr uint32_t kMaxZenzLiveCorrectionDelayMsec = 5000;
 constexpr uint32_t kMaxZenzLiveCorrectionTimeoutMsec = 1000;
+constexpr uint32_t kDefaultZenzCloudCorrectionTimeoutMsec = 1500;
+// Keep cloud requests inside kZenzLiveCorrectionAsyncWaitMsec so a late cloud
+// result can still be adopted by the async poll.
+constexpr uint32_t kMaxZenzCloudCorrectionTimeoutMsec = 3000;
 
 // This is not the model inference timeout.  It is the maximum time the session
 // keeps polling the async worker after the request has been submitted.  Cold
@@ -918,7 +922,39 @@ uint32_t GetZenzLiveCorrectionDelayMsec(const config::Config& config) {
                   kMaxZenzLiveCorrectionDelayMsec);
 }
 
+// Cloud correction goes through mozkey_cloud_scorer.exe, which exists only on
+// Windows.
+bool UseZenzCloudCorrection(const config::Config& config) {
+#if defined(_WIN32)
+  return config.use_zenz_cloud_correction();
+#else
+  return false;
+#endif  // _WIN32
+}
+
+// Deferred presentation hides the Mozc result until Zenz answers. A cloud
+// round trip is far longer than the presentation timeout, so cloud correction
+// always shows the Mozc result first and swaps in the correction later.
+bool IsZenzDeferredPresentationEnabled(const config::Config& config) {
+  return config.defer_live_conversion_display_until_zenz_result() &&
+         !UseZenzCloudCorrection(config);
+}
+
+const std::string& GetZenzLiveCorrectionPipeName(
+    const config::Config& config) {
+  return UseZenzCloudCorrection(config)
+             ? config.zenz_cloud_correction_pipe_name()
+             : config.zenz_live_correction_pipe_name();
+}
+
 uint32_t GetZenzLiveCorrectionTimeoutMsec(const config::Config& config) {
+  if (UseZenzCloudCorrection(config)) {
+    if (!config.has_zenz_cloud_correction_timeout_msec()) {
+      return kDefaultZenzCloudCorrectionTimeoutMsec;
+    }
+    return std::min(config.zenz_cloud_correction_timeout_msec(),
+                    kMaxZenzCloudCorrectionTimeoutMsec);
+  }
   if (!config.has_zenz_live_correction_timeout_msec()) {
     return kDefaultZenzLiveCorrectionTimeoutMsec;
   }
@@ -4115,7 +4151,7 @@ bool Session::MaybeStartLiveConversionAfterEditing(
   const config::Config& config = context_->GetConfig();
   const bool suppress_zenz_for_edit =
       config.use_zenz_live_correction() &&
-      config.defer_live_conversion_display_until_zenz_result();
+      IsZenzDeferredPresentationEnabled(config);
   return MaybeStartLiveConversionInternal(
       command, /*allow_zenz_live_correction=*/!suppress_zenz_for_edit,
       /*held_suggestion=*/nullptr);
@@ -4168,7 +4204,7 @@ bool Session::MaybeStartLiveConversionInternal(
   std::optional<DeferredZenzLivePresentation> deferred_zenz_presentation;
   const config::Config& config = context_->GetConfig();
   if (allow_zenz_live_correction && config.use_zenz_live_correction() &&
-      config.defer_live_conversion_display_until_zenz_result()) {
+      IsZenzDeferredPresentationEnabled(config)) {
     DeferredZenzLivePresentation state;
     state.previous_live_key = live_conversion_key_;
     state.previous_live_preedit = live_conversion_preedit_;
@@ -7339,7 +7375,7 @@ bool Session::AdvancePendingZenzLiveCorrection(
     request.prompt = pending_zenz_live_.prompt;
     request.left_context = pending_zenz_live_.left_context;
     request.mozc_value = pending_zenz_live_.mozc_value;
-    request.pipe_name = config.zenz_live_correction_pipe_name();
+    request.pipe_name = GetZenzLiveCorrectionPipeName(config);
     request.timeout_msec = timeout_msec;
     request.max_output_chars = 256;
     request.issued_at = pending_zenz_live_.issued_at;
@@ -7350,7 +7386,7 @@ bool Session::AdvancePendingZenzLiveCorrection(
 
     ZenzDebugOutput(absl::StrCat(
         "[zenz] async submit pipe_configured=",
-        config.zenz_live_correction_pipe_name().empty() ? "false" : "true",
+        GetZenzLiveCorrectionPipeName(config).empty() ? "false" : "true",
         " generation=", pending_zenz_live_.generation,
         " ", ZenzRedactedTextStats("key", pending_zenz_live_.key),
         " ", ZenzRedactedTextStats("mozc_value",
@@ -7384,7 +7420,7 @@ bool Session::AdvancePendingZenzLiveCorrection(
         command, "zenz_async_corrector_missing");
   }
 
-  if (config.defer_live_conversion_display_until_zenz_result() &&
+  if (IsZenzDeferredPresentationEnabled(config) &&
       now - pending_zenz_live_.issued_at >=
           absl::Milliseconds(deferred_presentation_timeout_msec)) {
     ZenzDebugOutput(absl::StrCat(

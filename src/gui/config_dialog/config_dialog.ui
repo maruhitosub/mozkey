@@ -1529,13 +1529,23 @@
                   </property>
                  </widget>
                 </item>
-                <item row="16" column="0" colspan="8">
+                <item row="16" column="0" colspan="4">
                  <widget class="QCheckBox" name="zenzLiveCorrectionCheckBox">
                   <property name="toolTip">
                    <string>ライブ変換結果に対して、ローカルの Zenz モデルで文脈補正を行います。</string>
                   </property>
                   <property name="text">
                    <string>Zenz ライブ補正を有効にする</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="16" column="4" colspan="4">
+                 <widget class="QCheckBox" name="zenzCloudCorrectionCheckBox">
+                  <property name="toolTip">
+                   <string>Zenz ライブ補正をクラウド AI (OpenCode Go などの OpenAI 互換 API) で行います。直前の文脈と読みが外部サービスへ送信されます。失敗時はローカルの Zenz で補正します。API キーと接続先は %LOCALAPPDATA%\Mozkey\cloud_scorer.ini と資格情報マネージャー (Mozkey/CloudScorer) で設定します。有効にすると「補正結果まで表示を待つ」は使われません。</string>
+                  </property>
+                  <property name="text">
+                   <string>クラウド AI で補正する</string>
                   </property>
                  </widget>
                 </item>
@@ -3732,6 +3742,7 @@
   <tabstop>liveConversionMinKeyLengthSpinBox</tabstop>
   <tabstop>showLiveConversionRubyWindow</tabstop>
   <tabstop>zenzLiveCorrectionCheckBox</tabstop>
+  <tabstop>zenzCloudCorrectionCheckBox</tabstop>
   <tabstop>zenzLiveCorrectionDelaySpinBox</tabstop>
   <tabstop>zenzLiveCorrectionMinKeyLengthSpinBox</tabstop>
   <tabstop>zenzDeferLiveConversionDisplayCheckBox</tabstop>

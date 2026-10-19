@@ -173,6 +173,7 @@
       <ComponentRef Id="CreditsEn" />
 
       <ComponentRef Id="ZenzScorer" />
+      <ComponentRef Id="CloudScorer" />
       <ComponentRef Id="ZenzLlamaServer" />
       <ComponentRef Id="ZenzModel" />
       <ComponentRef Id="ZenzThirdPartyNotices" />
@@ -312,6 +313,11 @@
 
         <Component Id="ZenzScorer">
           <File Id="mozc_zenz_scorer_exe" Name="mozc_zenz_scorer.exe" DiskId="1" Checksum="yes" Source="$(var.ZenzScorerPath)" Vital="yes" KeyPath="yes" />
+        </Component>
+        <!-- Not covered by the outbound-block firewall rules on purpose: it is
+             the only Mozkey process that talks to the cloud correction API. -->
+        <Component Id="CloudScorer">
+          <File Id="mozkey_cloud_scorer_exe" Name="mozkey_cloud_scorer.exe" DiskId="1" Checksum="yes" Source="$(var.CloudScorerPath)" Vital="yes" KeyPath="yes" />
         </Component>
         <Component Id="ZenzLlamaServer">
           <File Id="llama_server_exe" Name="llama-server.exe" DiskId="1" Checksum="yes" Source="$(var.ZenzLlamaServerPath)" Vital="yes" KeyPath="yes" />

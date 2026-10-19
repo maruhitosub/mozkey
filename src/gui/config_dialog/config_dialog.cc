@@ -558,6 +558,10 @@ ConfigDialog::ConfigDialog()
                    SLOT(SelectLiveConversionSetting(int)));
   QObject::connect(zenzLiveCorrectionCheckBox, SIGNAL(stateChanged(int)), this,
                    SLOT(SelectZenzLiveCorrectionSetting(int)));
+#if !defined(_WIN32)
+  // mozkey_cloud_scorer.exe is Windows only.
+  zenzCloudCorrectionCheckBox->setVisible(false);
+#endif  // !_WIN32
   QObject::connect(zenzDeferLiveConversionDisplayCheckBox,
                    SIGNAL(stateChanged(int)), this,
                    SLOT(SelectZenzDeferredPresentationSetting(int)));
@@ -3574,6 +3578,7 @@ void ConfigDialog::ConvertFromProto(const config::Config &config) {
                show_live_conversion_ruby_window);
 
   SET_CHECKBOX(zenzLiveCorrectionCheckBox, use_zenz_live_correction);
+  SET_CHECKBOX(zenzCloudCorrectionCheckBox, use_zenz_cloud_correction);
   SET_CHECKBOX(zenzDeferLiveConversionDisplayCheckBox,
                defer_live_conversion_display_until_zenz_result);
 
@@ -3940,6 +3945,7 @@ void ConfigDialog::ConvertToProto(config::Config *config) const {
                show_live_conversion_ruby_window);
 
   GET_CHECKBOX(zenzLiveCorrectionCheckBox, use_zenz_live_correction);
+  GET_CHECKBOX(zenzCloudCorrectionCheckBox, use_zenz_cloud_correction);
   GET_CHECKBOX(zenzDeferLiveConversionDisplayCheckBox,
                defer_live_conversion_display_until_zenz_result);
   config->set_zenz_live_correction_delay_msec(
@@ -4980,6 +4986,7 @@ void ConfigDialog::SelectZenzLiveCorrectionSetting(int state) {
 
   zenzLiveCorrectionDelayLabel->setEnabled(enabled);
   zenzLiveCorrectionDelaySpinBox->setEnabled(enabled);
+  zenzCloudCorrectionCheckBox->setEnabled(enabled);
   zenzDeferLiveConversionDisplayCheckBox->setEnabled(enabled);
   SelectZenzDeferredPresentationSetting(
       enabled ? static_cast<int>(
