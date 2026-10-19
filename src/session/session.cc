@@ -230,10 +230,11 @@ constexpr uint32_t kMaxZenzDeferredPresentationTimeoutMsec = 3000;
 constexpr uint32_t kMaxZenzLiveCorrectionRightContextLength = 128;
 constexpr uint32_t kMaxZenzLiveCorrectionDelayMsec = 5000;
 constexpr uint32_t kMaxZenzLiveCorrectionTimeoutMsec = 1000;
-constexpr uint32_t kDefaultZenzCloudCorrectionTimeoutMsec = 2500;
-// Keep cloud requests inside kZenzLiveCorrectionAsyncWaitMsec so a late cloud
-// result can still be adopted by the async poll.
-constexpr uint32_t kMaxZenzCloudCorrectionTimeoutMsec = 3000;
+// OpenCode Go answers in 1-5 s depending on load. The async poll waits for
+// max(timeout, kZenzLiveCorrectionAsyncWaitMsec), so a late result is still
+// adopted while the user pauses; continued typing discards it by generation.
+constexpr uint32_t kDefaultZenzCloudCorrectionTimeoutMsec = 4000;
+constexpr uint32_t kMaxZenzCloudCorrectionTimeoutMsec = 6000;
 
 // This is not the model inference timeout.  It is the maximum time the session
 // keeps polling the async worker after the request has been submitted.  Cold

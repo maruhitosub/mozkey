@@ -561,9 +561,12 @@ ZenzLiveResponse ZenzNamedPipeClient::Convert(
                             [&] { ::SetEvent(cancellation_event.get()); });
 
   const absl::Time start = absl::Now();
+  // Cloud correction requests may legitimately take longer than the local
+  // scorer's safety budget; never cut a request off before its own timeout.
   const Deadline transport_deadline =
       Clock::now() +
-      std::chrono::milliseconds(transport_safety_timeout_msec_);
+      std::chrono::milliseconds(std::max<uint32_t>(
+          transport_safety_timeout_msec_, request.timeout_msec + 1000));
 
   if (request.prompt.size() > kMaxPromptBytes) {
     response.ok = false;

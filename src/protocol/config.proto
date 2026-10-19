@@ -398,7 +398,7 @@ message Config {
   // Timeout in milliseconds for one cloud correction request. Cloud round
   // trips are slower than local Zenz, so this is separate from
   // zenz_live_correction_timeout_msec.
-  optional uint32 zenz_cloud_correction_timeout_msec = 1902 [default = 2500];
+  optional uint32 zenz_cloud_correction_timeout_msec = 1902 [default = 4000];
 
   // Legacy combined Zenz feedback switch (recording, automatic reuse, and
   // Zenz-to-Mozc history learning). Keep field 1011 for configuration backward

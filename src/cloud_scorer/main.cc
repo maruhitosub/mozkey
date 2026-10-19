@@ -87,7 +87,7 @@ constexpr int kMaxMaxTokens = 1024;
 
 constexpr uint32_t kMaxPromptBytes = 8192;
 constexpr uint32_t kMaxOutputChars = 256;
-constexpr uint32_t kMaxRequestTimeoutMsec = 5000;
+constexpr uint32_t kMaxRequestTimeoutMsec = 8000;
 constexpr uint32_t kMinRequestTimeoutMsec = 50;
 // The local scorer is only a fallback; never let it hold the response longer
 // than its own normal budget.
@@ -171,14 +171,17 @@ std::wstring KnownFolderPath(REFKNOWNFOLDERID id) {
 
 struct SettingsLocation {
   std::wstring path;
-  // Short ASCII tag reported in the response debug string ("cfg=...").
-  const char* source = "none";
+  // Short ASCII tag reported in the response debug string ("cfg=...").  When
+  // nothing is found it lists each candidate's Win32 error, e.g.
+  // "none(env:5,known:5,low:2)".
+  std::string source = "none";
 };
 
 // mozc_server starts this process inside its sandbox (low integrity,
-// restricted token, locked-down job), where SHGetKnownFolderPath was observed
-// not to yield a readable settings file.  Prefer the inherited LOCALAPPDATA,
-// then the known folders, and use the first file that exists.
+// restricted token, locked-down job), where the settings file under
+// %LOCALAPPDATA% was observed to be unreadable.  Try the inherited
+// LOCALAPPDATA, the known folder, then LocalLow (writable from low integrity),
+// and use the first file that exists.
 SettingsLocation GetSettingsLocation() {
   constexpr wchar_t kRelative[] = L"\\Mozkey\\cloud_scorer.ini";
   const std::pair<std::wstring, const char*> candidates[] = {
@@ -186,16 +189,23 @@ SettingsLocation GetSettingsLocation() {
       {KnownFolderPath(FOLDERID_LocalAppData), "known"},
       {KnownFolderPath(FOLDERID_LocalAppDataLow), "low"},
   };
+  std::string errors;
   for (const auto& [dir, source] : candidates) {
-    if (dir.empty()) continue;
+    if (!errors.empty()) errors += ",";
+    errors += source;
+    if (dir.empty()) {
+      errors += ":nodir";
+      continue;
+    }
     const std::wstring path = dir + kRelative;
     const DWORD attr = ::GetFileAttributesW(path.c_str());
     if (attr != INVALID_FILE_ATTRIBUTES &&
         (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
       return {path, source};
     }
+    errors += ":" + std::to_string(::GetLastError());
   }
-  return {};
+  return {std::wstring(), "none(" + errors + ")"};
 }
 
 std::wstring ReadIniString(const std::wstring& path, const wchar_t* key,
@@ -242,7 +252,7 @@ struct Options {
   std::string extra_body_members;
   bool local_fallback = true;
   std::string api_key;
-  const char* settings_source = "none";
+  std::string settings_source = "none";
 };
 
 // Settings are re-read for each request so edits apply without restarting.
@@ -586,16 +596,31 @@ class CloudClient {
 
     std::string response_body;
     DWORD status_code = 0;
-    const bool ok =
-        ::WinHttpSendRequest(request, headers.c_str(),
-                             static_cast<DWORD>(-1L),
-                             const_cast<char*>(body.data()),
-                             static_cast<DWORD>(body.size()),
-                             static_cast<DWORD>(body.size()), 0) &&
-        ::WinHttpReceiveResponse(request, nullptr) &&
-        QueryStatus(request, &status_code) &&
-        ReadBody(request, &response_body);
+    // |phase| names the last step started; it is reported on failure so a
+    // stall inside mozc_server's sandbox can be located without a debugger.
+    const ULONGLONG http_start = ::GetTickCount64();
+    const char* phase = "send";
+    bool ok = ::WinHttpSendRequest(request, headers.c_str(),
+                                   static_cast<DWORD>(-1L),
+                                   const_cast<char*>(body.data()),
+                                   static_cast<DWORD>(body.size()),
+                                   static_cast<DWORD>(body.size()), 0);
+    if (ok) {
+      phase = "receive";
+      ok = ::WinHttpReceiveResponse(request, nullptr);
+    }
+    if (ok) {
+      phase = "status";
+      ok = QueryStatus(request, &status_code);
+    }
+    if (ok) {
+      phase = "body";
+      ok = ReadBody(request, &response_body);
+    }
     const DWORD error = ok ? ERROR_SUCCESS : ::GetLastError();
+    const std::string phase_info =
+        std::string("@") + phase + "_" +
+        std::to_string(::GetTickCount64() - http_start) + "ms";
     {
       std::lock_guard<std::mutex> watchdog_lock(watchdog_mutex);
       finished = true;
@@ -610,8 +635,9 @@ class CloudClient {
       Reset();
       const bool timed_out = aborted || error == ERROR_WINHTTP_TIMEOUT;
       result.status = timed_out ? kZenzWireStatusTimeout : kZenzWireStatusError;
-      result.debug = timed_out ? "cloud_timeout"
-                               : "cloud_http_failed_" + std::to_string(error);
+      result.debug = (timed_out ? std::string("cloud_timeout")
+                                : "cloud_http_failed_" + std::to_string(error)) +
+                     phase_info + "_err" + std::to_string(error);
       return result;
     }
     if (status_code != 200) {
@@ -636,7 +662,7 @@ class CloudClient {
     }
     result.status = kZenzWireStatusOk;
     result.value = std::move(text);
-    result.debug = "cloud_ok";
+    result.debug = "cloud_ok" + phase_info;
     return result;
   }
 
