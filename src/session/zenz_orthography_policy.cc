@@ -136,10 +136,43 @@ bool StringMultisetsMatch(const std::vector<std::string>& baseline_values,
   return true;
 }
 
+std::string AsciiToLower(absl::string_view value) {
+  std::string lower(value);
+  for (char& c : lower) {
+    if ('A' <= c && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+  }
+  return lower;
+}
+
+// Every candidate value must either be one of the baseline values or occur in
+// the typed keystrokes.  Fullwidth letters never match the ASCII keystrokes.
+bool ValuesBaselineOrTyped(const std::vector<std::string>& baseline_values,
+                           const std::vector<std::string>& candidate_values,
+                           absl::string_view typed_ascii) {
+  const std::string typed_lower = AsciiToLower(typed_ascii);
+  for (const std::string& candidate_value : candidate_values) {
+    bool in_baseline = false;
+    for (const std::string& baseline_value : baseline_values) {
+      if (baseline_value == candidate_value) {
+        in_baseline = true;
+        break;
+      }
+    }
+    if (!in_baseline && typed_lower.find(AsciiToLower(candidate_value)) ==
+                            std::string::npos) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 ZenzOrthographyDecision ZenzOrthographyPolicy::Evaluate(
-    absl::string_view mozc_value, absl::string_view candidate_value) const {
+    absl::string_view mozc_value, absl::string_view candidate_value,
+    absl::string_view typed_ascii) const {
   if (!Util::IsValidUtf8(mozc_value) || !Util::IsValidUtf8(candidate_value)) {
     ZenzOrthographyDecision decision;
     decision.allow = false;
@@ -154,6 +187,18 @@ ZenzOrthographyDecision ZenzOrthographyPolicy::Evaluate(
   const std::vector<std::string> candidate_runs =
       ExtractAlphabetRuns(candidate_value);
   const std::vector<std::string> baseline_runs = ExtractAlphabetRuns(mozc_value);
+  if (!typed_ascii.empty()) {
+    if (!ValuesBaselineOrTyped(baseline_runs, candidate_runs, typed_ascii) ||
+        !ValuesBaselineOrTyped(ExtractAsciiTechnicalTokens(mozc_value),
+                               ExtractAsciiTechnicalTokens(candidate_value),
+                               typed_ascii)) {
+      ZenzOrthographyDecision decision;
+      decision.allow = false;
+      decision.reason = "alphabetic_surface_not_typed";
+      return decision;
+    }
+    return {};
+  }
   if (!StringMultisetsMatch(baseline_runs, candidate_runs)) {
     ZenzOrthographyDecision decision;
     decision.allow = false;

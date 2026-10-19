@@ -25,9 +25,22 @@ Zenz ライブ補正をクラウドの LLM で行う機能です。OpenAI 互換
 - クラウド補正中は「補正結果まで表示を待つ」設定は使われません
   (Mozc の結果を先に表示し、補正結果が届いたら差し替えます)。
 
+## 英語の自動判別と打ち間違いの修正
+
+ローマ字入力では、実際に打ったキー (例: `kyouhameetingdesu`) もクラウドに送り、
+次の補正を許可しています。
+
+- 英語の語として打った部分は英字のまま残す (`今日はmeetingです`)。
+- 明らかな打ち間違いを直す (`arigaou` → `ありがとう`)。
+
+安全のため、補正結果に含まれる英字は「実際に打ったキーに含まれる綴り」だけが
+採用されます (大文字・小文字の違いは可)。打っていない英字が出てきた場合
+(`kare` → `care` など) は補正を採用せず、Mozc の結果のままにします。
+かな入力のときはこの機能は使われません。
+
 ## 送信される内容
 
-- 入力中の読み (カタカナ)
+- 入力中の読み (カタカナ) と、ローマ字入力時は実際に打ったキー
 - 直前の文脈 (既定で最大 24 文字。既存のプライバシー判定で除外されたものは送られません)
 - 有効にしている場合は直後の文脈、プロフィール・話題・文体・補足の各設定
 
@@ -43,8 +56,8 @@ Zenz ライブ補正をクラウドの LLM で行う機能です。OpenAI 互換
    cmdkey /generic:Mozkey/CloudScorer /user:opencode /pass:<API キー>
    ```
 
-   環境変数 `MOZKEY_CLOUD_API_KEY` または `OPENCODE_API_KEY` でも指定できます
-   (資格情報マネージャーが優先されます)。
+   環境変数でも指定できます。優先順位は `MOZKEY_CLOUD_API_KEY` →
+   資格情報マネージャー → `OPENCODE_API_KEY` です。
 3. 必要なら `%LOCALAPPDATA%\Mozkey\cloud_scorer.ini` で接続先とモデルを変えます。
    ファイルは要求ごとに読み直されるので、変更は即時反映されます。
 
@@ -53,15 +66,17 @@ Zenz ライブ補正をクラウドの LLM で行う機能です。OpenAI 互換
    ; OpenAI 互換 chat completions のエンドポイント (https 必須。localhost のみ http 可)
    endpoint=https://opencode.ai/inference/go/openai/v1/chat/completions
    ; OpenCode Go の Chat Completions 対応モデル ID
-   model=glm-5.3-flash
+   model=deepseek-v4.1-flash
    max_tokens=128
-   ; リクエスト本文に追加する JSON メンバー (カンマ区切り)
-   extra_body="temperature":0
+   ; リクエスト本文に追加する JSON メンバー (カンマ区切り。既定は空)
+   ; 例: extra_body="temperature":0.2 (モデルによっては 0 を受け付けません)
+   extra_body=
    ; 0 にするとクラウド失敗時にローカル Zenz へフォールバックしない
    local_fallback=1
    ```
 
-   環境変数 `MOZKEY_CLOUD_ENDPOINT` / `MOZKEY_CLOUD_MODEL` は ini より優先されます。
+   環境変数 `MOZKEY_CLOUD_ENDPOINT` / `MOZKEY_CLOUD_MODEL` /
+   `MOZKEY_CLOUD_LOCAL_FALLBACK` は ini より優先されます。
 
 ## タイムアウト
 
@@ -74,4 +89,9 @@ Zenz ライブ補正をクラウドの LLM で行う機能です。OpenAI 互換
 
 環境変数 `MOZKEY_CLOUD_SCORER_DEBUG=1` を設定すると、`OutputDebugString` に
 処理結果 (成否の理由と出力のバイト数のみ。入力文字列は出しません) を出力します。
-DebugView などで確認できます。
+DebugView などで確認できます。API がエラーを返した場合は
+`cloud_http_status_400:<API のエラーメッセージ>` のように理由も出ます。
+
+開発中のビルドをインストール済みの scorer と並べて動かすときは、
+`MOZKEY_CLOUD_SCORER_INSTANCE=<名前>` を設定すると
+`\\.\pipe\mozkey_cloud_scorer_<名前>` で待ち受けます。

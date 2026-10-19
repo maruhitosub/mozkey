@@ -9,9 +9,9 @@
 //   %LOCALAPPDATA%\Mozkey\cloud_scorer.ini
 //     [cloud]
 //     endpoint=https://opencode.ai/inference/go/openai/v1/chat/completions
-//     model=glm-5.3-flash
+//     model=deepseek-v4.1-flash
 //     max_tokens=128
-//     extra_body="temperature":0
+//     extra_body=
 //     local_fallback=1
 //   API key: Windows Credential Manager generic credential
 //     "Mozkey/CloudScorer" (password field), or the MOZKEY_CLOUD_API_KEY /
@@ -68,11 +68,14 @@ constexpr wchar_t kLocalPipeName[] = L"\\\\.\\pipe\\mozc_zenz_scorer";
 constexpr wchar_t kLocalScorerExe[] = L"mozc_zenz_scorer.exe";
 constexpr wchar_t kSingleInstanceMutexName[] =
     L"Local\\MozkeyCloudScorerSingleInstance";
+// Development/test instances set MOZKEY_CLOUD_SCORER_INSTANCE=<[A-Za-z0-9_]+>
+// to serve "<kPipeName>_<instance>" next to an installed scorer.
+constexpr wchar_t kInstanceEnv[] = L"MOZKEY_CLOUD_SCORER_INSTANCE";
 constexpr wchar_t kCredentialTarget[] = L"Mozkey/CloudScorer";
 
 constexpr wchar_t kDefaultEndpoint[] =
     L"https://opencode.ai/inference/go/openai/v1/chat/completions";
-constexpr wchar_t kDefaultModel[] = L"glm-5.3-flash";
+constexpr wchar_t kDefaultModel[] = L"deepseek-v4.1-flash";
 constexpr int kDefaultMaxTokens = 128;
 constexpr int kMaxMaxTokens = 1024;
 
@@ -171,8 +174,11 @@ std::wstring ReadIniString(const std::wstring& path, const wchar_t* key,
   return std::wstring(buffer.data(), len);
 }
 
-// Reads the API key from Windows Credential Manager, then the environment.
+// Reads the API key from MOZKEY_CLOUD_API_KEY (an explicit per-process
+// override), Windows Credential Manager, then OPENCODE_API_KEY.
 std::string LoadApiKey() {
+  const std::wstring override_key = GetEnvWide(L"MOZKEY_CLOUD_API_KEY");
+  if (!override_key.empty()) return WideToUtf8(override_key);
   PCREDENTIALW credential = nullptr;
   if (::CredReadW(kCredentialTarget, CRED_TYPE_GENERIC, 0, &credential)) {
     std::string key;
@@ -192,11 +198,7 @@ std::string LoadApiKey() {
     ::CredFree(credential);
     if (!key.empty()) return key;
   }
-  for (const wchar_t* name : {L"MOZKEY_CLOUD_API_KEY", L"OPENCODE_API_KEY"}) {
-    const std::wstring value = GetEnvWide(name);
-    if (!value.empty()) return WideToUtf8(value);
-  }
-  return std::string();
+  return WideToUtf8(GetEnvWide(L"OPENCODE_API_KEY"));
 }
 
 struct Options {
@@ -220,14 +222,29 @@ Options LoadOptions() {
     if (parsed > 0) options.max_tokens = std::min(parsed, kMaxMaxTokens);
   }
   options.extra_body_members =
-      WideToUtf8(ReadIniString(ini, L"extra_body", L"\"temperature\":0"));
+      WideToUtf8(ReadIniString(ini, L"extra_body", L""));
   options.local_fallback = ReadIniString(ini, L"local_fallback", L"1") != L"0";
   const std::wstring env_endpoint = GetEnvWide(L"MOZKEY_CLOUD_ENDPOINT");
   if (!env_endpoint.empty()) options.endpoint = env_endpoint;
   const std::wstring env_model = GetEnvWide(L"MOZKEY_CLOUD_MODEL");
   if (!env_model.empty()) options.model = WideToUtf8(env_model);
+  const std::wstring env_fallback = GetEnvWide(L"MOZKEY_CLOUD_LOCAL_FALLBACK");
+  if (!env_fallback.empty()) options.local_fallback = env_fallback != L"0";
   options.api_key = LoadApiKey();
   return options;
+}
+
+// Returns "_<instance>" for a valid MOZKEY_CLOUD_SCORER_INSTANCE, else "".
+std::wstring GetInstanceSuffix() {
+  const std::wstring instance = GetEnvWide(kInstanceEnv);
+  if (instance.empty() || instance.size() > 32) return std::wstring();
+  for (const wchar_t c : instance) {
+    if (!((L'a' <= c && c <= L'z') || (L'A' <= c && c <= L'Z') ||
+          (L'0' <= c && c <= L'9') || c == L'_')) {
+      return std::wstring();
+    }
+  }
+  return L"_" + instance;
 }
 
 DWORD RemainingMsec(Deadline deadline) {
@@ -547,6 +564,9 @@ class CloudClient {
     }
     if (status_code != 200) {
       result.debug = "cloud_http_status_" + std::to_string(status_code);
+      const std::string message =
+          mozc::cloud_scorer::ExtractApiErrorMessage(response_body, 160);
+      if (!message.empty()) result.debug += ":" + message;
       return result;
     }
 
@@ -748,7 +768,8 @@ void HandleClient(HANDLE pipe, CloudClient* cloud) {
   // Run the local scorer concurrently so a cloud failure costs no extra time.
   std::future<BackendResult> local;
   if (options.local_fallback) {
-    local = std::async(std::launch::async, QueryLocalScorer, header, prompt,
+    local = std::async(std::launch::async, QueryLocalScorer, header,
+                       mozc::cloud_scorer::StripCloudOnlySegments(prompt),
                        std::min(timeout_msec, kMaxLocalFallbackTimeoutMsec));
   }
 
@@ -771,6 +792,7 @@ void HandleClient(HANDLE pipe, CloudClient* cloud) {
 
 int RunServer() {
   CloudClient cloud;
+  const std::wstring pipe_name = kPipeName + GetInstanceSuffix();
   while (true) {
     PSECURITY_DESCRIPTOR sd = nullptr;
     SECURITY_ATTRIBUTES sa = {};
@@ -780,8 +802,9 @@ int RunServer() {
       continue;
     }
     HANDLE pipe = ::CreateNamedPipeW(
-        kPipeName, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
-                       FILE_FLAG_FIRST_PIPE_INSTANCE,
+        pipe_name.c_str(),
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
+            FILE_FLAG_FIRST_PIPE_INSTANCE,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT |
             PIPE_REJECT_REMOTE_CLIENTS,
         1, 65536, 65536, 0, &sa);
@@ -807,7 +830,8 @@ int RunServer() {
 
 int wmain() {
   HANDLE single_instance =
-      ::CreateMutexW(nullptr, TRUE, kSingleInstanceMutexName);
+      ::CreateMutexW(nullptr, TRUE,
+                     (kSingleInstanceMutexName + GetInstanceSuffix()).c_str());
   if (single_instance != nullptr && ::GetLastError() == ERROR_ALREADY_EXISTS) {
     ::CloseHandle(single_instance);
     return 0;

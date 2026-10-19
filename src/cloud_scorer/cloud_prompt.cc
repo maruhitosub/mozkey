@@ -20,6 +20,7 @@ constexpr char32_t kZenzTopicBegin = 0xEE04;
 constexpr char32_t kZenzStyleBegin = 0xEE05;
 constexpr char32_t kZenzSettingsBegin = 0xEE06;
 constexpr char32_t kZenzRightContextBegin = 0xEE07;
+constexpr char32_t kZenzTypedInputBegin = 0xEE08;
 
 constexpr size_t kMaxJsonDepth = 32;
 
@@ -278,6 +279,20 @@ constexpr char kSystemPrompt[] =
     "- 直前・直後の文脈そのものは出力に含めない。\n"
     "- 文脈に合うなら、ひらがな・カタカナ・英数字・記号もそのまま使う。";
 
+// Appended when the raw romaji keystrokes are available.
+constexpr char kTypedInputRules[] =
+    "\n"
+    "「打鍵」はユーザーが実際に打ったローマ字です。次の2点だけは読みから"
+    "離れてよい:\n"
+    "- 英語の語を打ったと明らかに判断できる部分 (例: kyouhameetingdesu → "
+    "今日はmeetingです) は、打鍵どおりの英字で出力する。"
+    "英字は打鍵に含まれる綴りだけを使い、大文字小文字は自然な形にしてよい。"
+    "日本語としても自然に読める部分 (kare=彼、sake=酒 など) は日本語にする。\n"
+    "- 明らかな打ち間違い (キーの抜け・重複・隣接キーの押し間違い。"
+    "例: arigaou → ありがとう、konnnichiha → こんにちは) は、"
+    "意図した語に最小限の修正をして変換する。"
+    "確信が持てない場合は読みどおりに変換する。";
+
 void AppendSection(const char* label, const std::string& text,
                    std::string* out) {
   if (text.empty()) return;
@@ -314,10 +329,27 @@ bool ParseZenzPrompt(std::string_view prompt, ZenzPromptFields* fields) {
       case kZenzStyleBegin: target = &fields->style; break;
       case kZenzSettingsBegin: target = &fields->settings; break;
       case kZenzRightContextBegin: target = &fields->right_context; break;
+      case kZenzTypedInputBegin: target = &fields->typed_input; break;
       default: target = nullptr; break;
     }
   }
   return saw_reading && !fields->reading_katakana.empty();
+}
+
+std::string StripCloudOnlySegments(std::string_view prompt) {
+  std::string out;
+  out.reserve(prompt.size());
+  bool skipping = false;
+  size_t pos = 0;
+  while (pos < prompt.size()) {
+    const size_t start = pos;
+    const char32_t cp = DecodeUtf8(prompt, &pos);
+    if (IsZenzControl(cp)) {
+      skipping = cp == kZenzTypedInputBegin;
+    }
+    if (!skipping) out.append(prompt.substr(start, pos - start));
+  }
+  return out;
 }
 
 std::string JsonEscape(std::string_view input) {
@@ -355,13 +387,17 @@ std::string BuildChatCompletionsBody(const ZenzPromptFields& fields,
   AppendSection("直前の文脈", fields.left_context, &user);
   AppendSection("直後の文脈", fields.right_context, &user);
   AppendSection("読み", fields.reading_katakana, &user);
+  AppendSection("打鍵", fields.typed_input, &user);
+
+  std::string system = kSystemPrompt;
+  if (!fields.typed_input.empty()) system += kTypedInputRules;
 
   std::string body = "{\"model\":\"";
   body += JsonEscape(options.model);
   body += "\",\"max_tokens\":";
   body += std::to_string(options.max_tokens);
   body += ",\"stream\":false,\"messages\":[{\"role\":\"system\",\"content\":\"";
-  body += JsonEscape(kSystemPrompt);
+  body += JsonEscape(system);
   body += "\"},{\"role\":\"user\",\"content\":\"";
   body += JsonEscape(user);
   body += "\"}]";
@@ -402,6 +438,27 @@ bool ExtractChatCompletionText(std::string_view json, std::string* text,
   }
   *text = content->string_value;
   return true;
+}
+
+std::string ExtractApiErrorMessage(std::string_view json, size_t max_bytes) {
+  JsonParser parser(json);
+  const std::unique_ptr<JsonValue> root = parser.Parse();
+  const JsonValue* error = root == nullptr ? nullptr : root->Get("error");
+  const JsonValue* message = nullptr;
+  if (error != nullptr && error->type == JsonValue::Type::kString) {
+    message = error;
+  } else if (error != nullptr) {
+    message = error->Get("message");
+  }
+  if (message == nullptr || message->type != JsonValue::Type::kString) {
+    return std::string();
+  }
+  std::string out;
+  for (const char c : message->string_value) {
+    if (out.size() >= max_bytes) break;
+    out.push_back(c >= 0x20 && c <= 0x7E ? c : '?');
+  }
+  return out;
 }
 
 std::string CleanModelOutput(std::string_view text, uint32_t max_chars) {

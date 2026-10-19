@@ -13,6 +13,7 @@ constexpr char kOutputBegin[] = "\xEE\xB8\x81";        // U+EE01
 constexpr char kContextBegin[] = "\xEE\xB8\x82";       // U+EE02
 constexpr char kStyleBegin[] = "\xEE\xB8\x85";         // U+EE05
 constexpr char kRightContextBegin[] = "\xEE\xB8\x87";  // U+EE07
+constexpr char kTypedInputBegin[] = "\xEE\xB8\x88";    // U+EE08
 
 TEST(CloudPromptTest, ParsesContextAndReading) {
   const std::string prompt = std::string(kContextBegin) + "今日は" +
@@ -36,6 +37,41 @@ TEST(CloudPromptTest, ParsesConditionFields) {
   EXPECT_EQ(fields.reading_katakana, "キシャ");
 }
 
+TEST(CloudPromptTest, ParsesTypedInput) {
+  const std::string prompt = std::string(kTypedInputBegin) +
+                             "kyouhameetingdesu" + kContextBegin +
+                             kReadingBegin + "キョウハメエチングデス" +
+                             kOutputBegin;
+  ZenzPromptFields fields;
+  ASSERT_TRUE(ParseZenzPrompt(prompt, &fields));
+  EXPECT_EQ(fields.typed_input, "kyouhameetingdesu");
+  EXPECT_EQ(fields.reading_katakana, "キョウハメエチングデス");
+
+  ChatRequestOptions options;
+  options.model = "m";
+  const std::string body = BuildChatCompletionsBody(fields, options);
+  EXPECT_NE(body.find("[打鍵]\\nkyouhameetingdesu"), std::string::npos);
+  EXPECT_NE(body.find("打ち間違い"), std::string::npos);
+}
+
+TEST(CloudPromptTest, OmitsTypedRulesWithoutTypedInput) {
+  ZenzPromptFields fields;
+  fields.reading_katakana = "キシャ";
+  ChatRequestOptions options;
+  options.model = "m";
+  const std::string body = BuildChatCompletionsBody(fields, options);
+  EXPECT_EQ(body.find("打鍵"), std::string::npos);
+}
+
+TEST(CloudPromptTest, StripsTypedInputForLocalScorer) {
+  const std::string local = std::string(kContextBegin) + "今日は" +
+                            kReadingBegin + "イイ" + kOutputBegin;
+  EXPECT_EQ(
+      StripCloudOnlySegments(std::string(kTypedInputBegin) + "ii" + local),
+      local);
+  EXPECT_EQ(StripCloudOnlySegments(local), local);
+}
+
 TEST(CloudPromptTest, RejectsPromptWithoutReading) {
   ZenzPromptFields fields;
   EXPECT_FALSE(ParseZenzPrompt(std::string(kContextBegin) + "abc", &fields));
@@ -48,11 +84,11 @@ TEST(CloudPromptTest, BuildsEscapedBody) {
   fields.left_context = "say \"hi\"\n";
   fields.reading_katakana = "キシャ";
   ChatRequestOptions options;
-  options.model = "glm-5.3-flash";
+  options.model = "deepseek-v4.1-flash";
   options.max_tokens = 64;
   options.extra_body_members = "\"temperature\":0";
   const std::string body = BuildChatCompletionsBody(fields, options);
-  EXPECT_NE(body.find("\"model\":\"glm-5.3-flash\""), std::string::npos);
+  EXPECT_NE(body.find("\"model\":\"deepseek-v4.1-flash\""), std::string::npos);
   EXPECT_NE(body.find("\"max_tokens\":64"), std::string::npos);
   EXPECT_NE(body.find("say \\\"hi\\\"\\n"), std::string::npos);
   EXPECT_NE(body.find("キシャ"), std::string::npos);
@@ -84,6 +120,16 @@ TEST(CloudPromptTest, ReportsErrors) {
   EXPECT_FALSE(ExtractChatCompletionText(
       R"({"choices":[{"message":{"content":""}}]})", &text, &error));
   EXPECT_EQ(error, "empty_content");
+}
+
+TEST(CloudPromptTest, ExtractsApiErrorMessage) {
+  EXPECT_EQ(ExtractApiErrorMessage(
+                R"({"error":{"message":"temperature must be > 0"}})", 160),
+            "temperature must be > 0");
+  EXPECT_EQ(ExtractApiErrorMessage(R"({"error":"bad model"})", 3), "bad");
+  EXPECT_EQ(ExtractApiErrorMessage(R"({"error":{"message":"é"}})", 160),
+            "??");
+  EXPECT_EQ(ExtractApiErrorMessage("not json", 160), "");
 }
 
 TEST(CloudPromptTest, CleansOutput) {

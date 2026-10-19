@@ -18,10 +18,17 @@ struct ZenzPromptFields {
   std::string style;
   std::string settings;
   std::string reading_katakana;
+  // Raw romaji keystrokes (U+EE08 segment).  Sent only by mozc_server in
+  // cloud correction mode; the local Zenz model does not understand it.
+  std::string typed_input;
 };
 
 // Returns false when the prompt has no reading segment.
 bool ParseZenzPrompt(std::string_view prompt, ZenzPromptFields* fields);
+
+// Removes cloud-only segments (U+EE08 typed input) so the prompt can be
+// forwarded to the local Zenz scorer unchanged otherwise.
+std::string StripCloudOnlySegments(std::string_view prompt);
 
 struct ChatRequestOptions {
   std::string model;
@@ -39,6 +46,10 @@ std::string BuildChatCompletionsBody(const ZenzPromptFields& fields,
 // On failure, |error| receives a short ASCII reason.
 bool ExtractChatCompletionText(std::string_view json, std::string* text,
                                std::string* error);
+
+// Returns error.message (or a string "error") from an API error response,
+// reduced to printable ASCII and |max_bytes|, for debug logs.  Empty if none.
+std::string ExtractApiErrorMessage(std::string_view json, size_t max_bytes);
 
 // Normalizes model output into a single conversion string: trims whitespace,
 // keeps only the first line, strips wrapping quotes/brackets and zenz control

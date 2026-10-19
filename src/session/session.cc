@@ -940,6 +940,29 @@ bool IsZenzDeferredPresentationEnabled(const config::Config& config) {
          !UseZenzCloudCorrection(config);
 }
 
+// Prompt segment marker understood only by mozkey_cloud_scorer.
+constexpr char kZenzCloudTypedInputBegin[] = "î¸";  // U+EE08
+constexpr size_t kMaxZenzCloudTypedAsciiBytes = 256;
+
+// Keeps printable ASCII keystrokes from the composer's raw input. Returns an
+// empty string when there is no letter (kana input, digits only) or the input
+// is too long to be a single live-conversion chunk.
+std::string ExtractZenzCloudTypedAscii(absl::string_view raw) {
+  std::string typed;
+  bool has_letter = false;
+  for (const char c : raw) {
+    if (c < 0x21 || c > 0x7E) {
+      continue;
+    }
+    has_letter |= ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z');
+    typed.push_back(c);
+  }
+  if (!has_letter || typed.size() > kMaxZenzCloudTypedAsciiBytes) {
+    return std::string();
+  }
+  return typed;
+}
+
 const std::string& GetZenzLiveCorrectionPipeName(
     const config::Config& config) {
   return UseZenzCloudCorrection(config)
@@ -7043,8 +7066,24 @@ bool Session::MaybeScheduleZenzLiveCorrection(
       zenz_adoption_policy_.ProtectPromptKey(protected_prompt_input);
 
   ZenzPromptBuilder prompt_builder;
-  const std::string prompt =
+  std::string prompt =
       prompt_builder.Build(protected_prompt.key, prompt_options);
+
+  // The cloud scorer also receives the raw romaji so it can keep English words
+  // typed in romaji ("meeting") as English and repair typos. The local Zenz
+  // model never sees this segment: mozkey_cloud_scorer strips it before
+  // falling back.
+  std::string typed_ascii;
+  // Kana-layout input also produces ASCII raw keys, but they are not romaji.
+  if (UseZenzCloudCorrection(config) &&
+      config.preedit_method() == config::Config::ROMAN &&
+      protected_prompt.placeholder_count == 0) {
+    typed_ascii =
+        ExtractZenzCloudTypedAscii(context_->composer().GetRawString());
+    if (!typed_ascii.empty()) {
+      prompt.insert(0, absl::StrCat(kZenzCloudTypedInputBegin, typed_ascii));
+    }
+  }
 
   ++zenz_live_generation_;
 
@@ -7058,6 +7097,7 @@ bool Session::MaybeScheduleZenzLiveCorrection(
       live_conversion_preedit_.empty() ? live_conversion_key_
                                        : live_conversion_preedit_;
   pending_zenz_live_.prompt = prompt;
+  pending_zenz_live_.typed_ascii = typed_ascii;
   pending_zenz_live_.protected_spans = protected_prompt.protected_spans;
   pending_zenz_live_.baseline_segments = BuildZenzAdoptionBaselineSegments(
       live_conversion_preedit_output_, live_conversion_key_,
@@ -7636,6 +7676,7 @@ bool Session::ApplyZenzLiveCorrectionResult(
   adoption_input.zenz_value = zenz_value;
   adoption_input.protected_spans = pending_zenz_live_.protected_spans;
   adoption_input.baseline_segments = pending_zenz_live_.baseline_segments;
+  adoption_input.typed_ascii = pending_zenz_live_.typed_ascii;
 
   const ZenzAdoptionResult adoption =
       zenz_adoption_policy_.Decide(adoption_input);

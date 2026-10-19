@@ -92,5 +92,31 @@ TEST(ZenzOrthographyPolicyTest, AllowsJapaneseOnlyRewrite) {
   EXPECT_TRUE(policy.Evaluate("彼は点滴です", "彼は天敵です").allow);
 }
 
+TEST(ZenzOrthographyPolicyTest, AllowsLatinRunTypedAsRomaji) {
+  ZenzOrthographyPolicy policy;
+
+  EXPECT_TRUE(policy.Evaluate("今日はめえちんgです", "今日はmeetingです",
+                              "kyouhameetingdesu")
+                  .allow);
+  // Case may differ from the keystrokes.
+  EXPECT_TRUE(
+      policy.Evaluate("あいふぉね", "iPhone", "aifone iphone").allow);
+  // Japanese-only typo repair is unaffected.
+  EXPECT_TRUE(
+      policy.Evaluate("ありがおう", "ありがとう", "arigaou").allow);
+}
+
+TEST(ZenzOrthographyPolicyTest, RejectsLatinRunNotTyped) {
+  ZenzOrthographyPolicy policy;
+
+  const ZenzOrthographyDecision decision =
+      policy.Evaluate("東京", "Tokyo", "toukyou");
+  EXPECT_FALSE(decision.allow);
+  EXPECT_EQ(decision.reason, "alphabetic_surface_not_typed");
+  // "kare" was typed, but "care" was not.
+  EXPECT_FALSE(policy.Evaluate("彼", "care", "kare").allow);
+  EXPECT_FALSE(policy.Evaluate("C言語", "C++言語", "cgengo").allow);
+}
+
 }  // namespace
 }  // namespace mozc::session

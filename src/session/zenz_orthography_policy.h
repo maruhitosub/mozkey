@@ -50,8 +50,14 @@ struct ZenzOrthographyDecision {
 // Zenz alone may neither introduce, remove, nor mutate the protected surfaces.
 class ZenzOrthographyPolicy {
  public:
-  ZenzOrthographyDecision Evaluate(absl::string_view mozc_value,
-                                   absl::string_view candidate_value) const;
+  // When |typed_ascii| is non-empty (cloud correction), a Latin alphabet run
+  // or ASCII technical token absent from |mozc_value| is still allowed if it
+  // occurs, case-insensitively, in the user's raw keystrokes.  This lets an
+  // English word typed in romaji pass through as English while forbidding any
+  // Latin text the user did not type.
+  ZenzOrthographyDecision Evaluate(
+      absl::string_view mozc_value, absl::string_view candidate_value,
+      absl::string_view typed_ascii = absl::string_view()) const;
 };
 
 }  // namespace mozc::session

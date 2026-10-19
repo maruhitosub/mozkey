@@ -494,6 +494,9 @@ class Session {
     std::string mozc_value;
     std::string symbol_style_source;
     std::string prompt;
+    // Raw ASCII keystrokes sent only to the cloud scorer. Alphabet runs in the
+    // correction must come from these keystrokes (English pass-through).
+    std::string typed_ascii;
     std::vector<ProtectedConversionSpan> protected_spans;
     std::vector<ZenzBaselineSegment> baseline_segments;
     absl::Time issued_at;

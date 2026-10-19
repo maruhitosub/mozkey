@@ -788,7 +788,7 @@ ZenzAdoptionResult ZenzAdoptionPolicy::Decide(
         }
 
         const ZenzOrthographyDecision decision = orthography_policy_.Evaluate(
-            segment.mozc_value, segment.zenz_value);
+            segment.mozc_value, segment.zenz_value, input.typed_ascii);
         if (decision.allow) {
           orthography_repaired_value.append(segment.zenz_value);
           continue;
@@ -814,7 +814,8 @@ ZenzAdoptionResult ZenzAdoptionPolicy::Decide(
       adopted_value = std::move(orthography_repaired_value);
     } else {
       const ZenzOrthographyDecision decision =
-          orthography_policy_.Evaluate(input.mozc_value, adopted_value);
+          orthography_policy_.Evaluate(input.mozc_value, adopted_value,
+                                       input.typed_ascii);
       if (!decision.allow) {
         ZenzAdoptionResult result;
         result.action = ZenzAdoptionResult::Action::kReject;
@@ -825,7 +826,8 @@ ZenzAdoptionResult ZenzAdoptionPolicy::Decide(
     }
   } else {
     const ZenzOrthographyDecision decision =
-        orthography_policy_.Evaluate(input.mozc_value, adopted_value);
+        orthography_policy_.Evaluate(input.mozc_value, adopted_value,
+                                     input.typed_ascii);
     if (!decision.allow) {
       ZenzAdoptionResult result;
       result.action = ZenzAdoptionResult::Action::kReject;

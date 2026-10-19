@@ -104,6 +104,11 @@ struct ZenzAdoptionInput {
   absl::string_view zenz_value;
   std::vector<ProtectedConversionSpan> protected_spans;
   std::vector<ZenzBaselineSegment> baseline_segments;
+
+  // Raw ASCII keystrokes of the composition, set only for cloud correction.
+  // When non-empty, Latin letters in the correction are allowed as long as
+  // they were actually typed (see ZenzOrthographyPolicy::Evaluate).
+  absl::string_view typed_ascii;
 };
 
 struct ZenzAdoptionResult {
